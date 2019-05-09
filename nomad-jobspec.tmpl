@@ -1,0 +1,70 @@
+job "catchon-catcher" {
+  datacenters = [
+    "nsvltn"
+  ]
+  type = "service"
+  update {
+    max_parallel = 1
+    auto_revert = true
+  }
+  group "catcher" {
+    count = 1
+    restart {
+      attempts = 2
+      interval = "30m"
+      delay = "15s"
+      mode = "fail"
+    }
+    ephemeral_disk {
+      size = 256
+    }
+    task "catchon-catcher" {
+      template {
+        data = <<EOH
+STAN_CLUSTER_ID="{{key "env/stanClusterID"}}"
+EOH
+        destination="temp.env"
+        env = true
+      }
+      driver = "docker"
+      config {
+        image = "docker.ena.net:5000/alpine/${bamboo_imageName}:${branchlow}-${bamboo_buildNumber}"
+      }
+      env {
+        "SERVICE_IGNORE" = "true"
+        "CONSUL_HTTP_ADDR" = "${D}{attr.driver.docker.bridge_ip}:8500"
+        "CATCHER_PATH_PREFIX" = "catcher"
+      }
+      service {
+        name = "catchon-catcher"
+        port = 8892
+        address_mode = "driver"
+        tags = [
+            "urlprefix-/catcher/",
+            "catchon-catcher"
+        ]
+        check {
+            type = "http"
+            address_mode = "driver"
+            port = 8892
+            path = "/catcher/api/health"
+            interval = "30s"
+            timeout = "2s"
+            check_restart {
+                limit = 3
+                grace = "90s"
+                ignore_warnings = false
+            }
+        }
+      }
+      resources {
+        cpu = 100
+        memory = 256
+      }
+      logs {
+        max_files = 2
+        max_file_size = 100
+      }
+    }
+  }
+}
