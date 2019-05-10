@@ -30,8 +30,8 @@ require (
 	github.com/gotestyourself/gotestyourself v2.2.0+incompatible // indirect
 	github.com/hashicorp/consul v1.4.4
 	github.com/hashicorp/go-msgpack v0.5.5 // indirect
-	github.com/hashicorp/nomad v0.9.1
-	github.com/hashicorp/nomad/api v0.0.0-20190509181229-2fd32a2f31d2 // indirect
+	github.com/hashicorp/nomad v0.9.1-0.20190509220927-5abbee5d396c
+	github.com/hashicorp/nomad/api v0.0.0-20190509181229-2fd32a2f31d2
 	github.com/hashicorp/serf v0.8.2 // indirect
 	github.com/hashicorp/vault v1.1.2 // indirect
 	github.com/hashicorp/vault-plugin-auth-alicloud v0.5.1 // indirect

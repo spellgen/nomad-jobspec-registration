@@ -1,10 +1,11 @@
-package local_service
+package main
 
 import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/hashicorp/consul/api"
+	capi "github.com/hashicorp/consul/api"
+	napi "github.com/hashicorp/nomad/api"
 	"github.com/hashicorp/nomad/jobspec"
 	"github.com/myENA/consultant"
 	"github.com/myENA/consultant/util"
@@ -12,7 +13,9 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -58,7 +61,7 @@ func main() {
 	}
 
 	for k := range taskGroups {
-		log.Info().Msgf("Processing task group: %s", taskGroups[k].Name)
+		log.Info().Msgf("Processing task group: %s", *taskGroups[k].Name)
 		taskList := taskGroups[k].Tasks
 		for l := range taskList {
 			log.Info().Msgf("Diving into task list: %s", taskList[l].Name)
@@ -72,37 +75,9 @@ func main() {
 					continue
 				}
 
-				checks := api.AgentServiceChecks{}
-				for _, c := range s.Checks {
-					asc := &api.AgentServiceCheck{
-						CheckID: c.Id,
-						Name: c.Name,
-						Method: c.Method,
-						Interval: c.Interval.String(),
-					}
+				checks := buildChecks(s, myAddress)
 
-					checkPort, err := strconv.Atoi(c.PortLabel)
-					if err != nil {
-						log.Warn().Msgf("Check port is not a number (%s): %v", c.PortLabel, err)
-						continue
-					}
-
-					switch c.Method {
-					case "http":
-						u := url.URL{
-							Scheme: "http",
-							Host: fmt.Sprintf("%s:%d", myAddress, checkPort),
-							Path: c.Path,
-						}
-						asc.HTTP = u.String()
-					default:
-						log.Warn().Msgf("Unhandled check method: %s", c.Method)
-					}
-
-					checks = append(checks, asc)
-				}
-
-				asr := &api.AgentServiceRegistration{
+				asr := &capi.AgentServiceRegistration{
 					ID: serviceId(s.Name),
 					Name: s.Name,
 					Tags: s.Tags,
@@ -111,20 +86,69 @@ func main() {
 					Checks: checks,
 				}
 
-				j,_ := json.MarshalIndent(asr,"","  ")
-				log.Debug().Msgf("Agent service registration:\n%s",string(j))
+				j,_ := json.Marshal(asr)
+				// this is clearly not the correct way to use zerolog
+				log.Info().RawJSON("payload",j).Msg("write")
 
-				_=consul
-				//err = consul.Agent().ServiceRegister(asr)
-				//if err != nil {
-				//	log.Warn().Msgf("Something went wrong when trying to register the service: %v",err)
-				//}
+				err = consul.Agent().ServiceRegister(asr)
+				defer func(id string) {
+					err := consul.Agent().ServiceDeregister(id)
+					if err != nil {
+						log.Info().Msgf("Error deregistering %s",id)
+					} else {
+						log.Info().Msgf("Deregistered %s",id)
+					}
+				}(asr.ID)
+				if err != nil {
+					log.Warn().Msgf("Something went wrong when trying to register the service: %v",err)
+				}
 			}
 		}
 	}
+
+	// Wait for a signal to exit
+	log.Info().Msg("Now just waiting for the end")
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	sig := <-ch
+	log.Info().Msgf("Got a signal (%s), exiting\n", sig)
 
 }
 
 func serviceId(serviceName string) string {
 	return fmt.Sprintf("%s-%16x", serviceName, rand.Int63())
+}
+
+func buildChecks(s *napi.Service, myAddress string) []*capi.AgentServiceCheck {
+	checks := capi.AgentServiceChecks{}
+	for _, c := range s.Checks {
+		asc := &capi.AgentServiceCheck{
+			CheckID: c.Id,
+			Name: c.Name,
+			Interval: c.Interval.String(),
+		}
+
+		checkPort, err := strconv.Atoi(c.PortLabel)
+		if err != nil {
+			log.Warn().Msgf("Check port is not a number (%s): %v", c.PortLabel, err)
+			continue
+		}
+
+		switch c.Type {
+		case "http":
+			u := url.URL{
+				Scheme: "http",
+				Host: fmt.Sprintf("%s:%d", myAddress, checkPort),
+				Path: c.Path,
+			}
+			asc.HTTP = u.String()
+		default:
+			log.Warn().Msgf("Unhandled check method: %s", c.Method)
+		}
+
+		checks = append(checks, asc)
+	}
+
+	return checks
+
 }
