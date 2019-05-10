@@ -21,7 +21,6 @@ import (
 var (
 	fs          = flag.NewFlagSet("local_service", flag.ExitOnError)
 	jobspecFile = fs.String("jobspec", "nomad-jobspec.tmpl", "Specify jobspec to use if not default")
-	iface       = fs.String("iface", "", "Specify address by interface")
 	debug       = fs.Bool("debug", false, "Add extra logging")
 )
 
@@ -49,6 +48,8 @@ func main() {
 
 	taskGroups := job.TaskGroups
 
+	// MyAddress tries to be smart about which interface to use
+	// Set it explicitly by defining the environment variable "CONSUL_SERVICE_INTERFACE"
 	myAddress, err := util.MyAddress()
 	if err != nil {
 		fmt.Printf("Unable to determine the address of this host: %s\n", err)
@@ -72,6 +73,7 @@ func main() {
 
 				checks := buildChecks(s, myAddress)
 
+				// pull together the agent registration config
 				asr := &capi.AgentServiceRegistration{
 					ID:      serviceId(s.Name),
 					Name:    s.Name,
@@ -81,10 +83,16 @@ func main() {
 					Checks:  checks,
 				}
 
-				j, _ := json.MarshalIndent(asr,"> > > ","  ")
-				fmt.Printf("> > Registration: %s\n",string(j))
+				// show what we are about to do
+				j, _ := json.MarshalIndent(asr, "> > > ", "  ")
+				fmt.Printf("> > Registration: %s\n", string(j))
 
 				err = consul.Agent().ServiceRegister(asr)
+				if err != nil {
+					fmt.Printf("> ? Something went wrong when trying to register the service: %v\n", err)
+				}
+
+				// remove the registration before exiting
 				defer func(id string) {
 					err := consul.Agent().ServiceDeregister(id)
 					if err != nil {
@@ -93,9 +101,6 @@ func main() {
 						fmt.Printf("Deregistered %s\n", id)
 					}
 				}(asr.ID)
-				if err != nil {
-					fmt.Printf("> ? Something went wrong when trying to register the service: %v\n", err)
-				}
 			}
 		}
 	}
@@ -109,10 +114,12 @@ func main() {
 
 }
 
+// serviceId generates a likely unique ID for the service
 func serviceId(serviceName string) string {
 	return fmt.Sprintf("%s-%16x", serviceName, rand.Int63())
 }
 
+// buildChecks takes a nomad service spec and builds the check configs
 func buildChecks(s *napi.Service, myAddress string) []*capi.AgentServiceCheck {
 	checks := capi.AgentServiceChecks{}
 	for _, c := range s.Checks {
